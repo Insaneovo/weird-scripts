@@ -9,52 +9,46 @@ from time import sleep
 
 filter_rules = []
 
+debug = False
+
 def new_game(page: _generated.Page) -> int:
     rt = random.choice(targets)
-    print("开始输入试探词" , rt)
+    print('-'*30 + "\n开始输入试探词" , rt)
     inputNewWord(page, rt)
 
-    for i in range(7):
-        if i == 6:
+    for i in range(6):
+        accepted = filterWords(page)
+        if accepted['success'] :
+            print("赢一把！！！")
+            page.locator('button').get_by_text("new game").click()
+            return 1
+        elif i == 5:
+            print("输一把！！！")
+            if debug:
+                input()
             page.locator('button').get_by_text("new game").click()
             return 0
-        accepted = filterWords(page)
-        if len(accepted[0]) > 1:
-            # if len(accepted[0]) > 5 and i > 2 and len(accepted[1]) < 9:
-            #     ok = False
-            #     for target in targets:
-            #         if len([ac for ac in accepted[1] if ac in target]) == 0:
-            #             inputNewWord(page,target)
-            #             ok = True
-            #     if not ok:
-            #         inputNewWord(page, random.choice(accepted[0]))
-            # else:
-            #     inputNewWord(page,random.choice(accepted[0]))
-            rt = random.choice(accepted[0])
+        if len(accepted["words"]) > 0:
+            rt = random.choice(accepted["words"])
             inputNewWord(page, rt)
             print("输入单词：",rt)
-        elif len(accepted[0]) > 0:
-            if accepted[0][0] == 'enter':
-                page.locator('button').get_by_text("new game").click()
-                return 1
-            else:
-                inputNewWord(page,accepted[0][0])
-                print("输入单词：", accepted[0][0])
+
 
         else:
             print("Damn!!!")
-            print(accepted[2])
-            input()
+            print(accepted["rules"])
+            if debug:
+                input()
 
 def inputNewWord(page : _generated.Page , word, check : bool = True):
     for char in word:
         page.locator(".Game-keyboard-button").get_by_text(char,exact=True).click()
     page.locator(".Game-keyboard-button").get_by_text("Enter").click()
 
-def filterWords(page : _generated.Page) -> list:
+def filterWords(page : _generated.Page) -> dict:
     rules = checkStatus(page)
     if rules['success']:
-        return [["enter"]]
+        return {"success":True}
     else:
         rules = rules['rules']
     results = []
@@ -78,44 +72,54 @@ def filterWords(page : _generated.Page) -> list:
                 break
         if broken:
             continue
-        for rule in rules['norepeat']:
-            if target.count(rule.lower()) > 1:
-                broken = True
-                break
-        if broken:
-            continue
+        # for rule in rules['norepeat']:
+        #     if target.count(rule['letter'].lower()) > rule['times']:
+        #         broken = True
+        #         break
+        # if broken:
+        #     continue
         results.append(target)
     # print(results)
+    #
+    # words = set()
+    # [words.add(r) for r in rules['no']]
+    # [words.add(r['letter']) for r in rules['elsewhere']]
+    # [words.add(r['letter']) for r in rules['correct']]
 
-    words = set()
-    [words.add(r) for r in rules['no']]
-    [words.add(r['letter']) for r in rules['elsewhere']]
-    [words.add(r['letter']) for r in rules['correct']]
-
-    return [results,words,rules]
+    return {"success":False,"words":results,"rules":rules}
 
 def checkStatus(page : _generated.Page):
     try:
         sleep(1)
-        rules = {"correct":[],"elsewhere":[],"no":set(),"norepeat":set()}
+        rules = {"correct":[],"elsewhere":[],"no":[]}
 
         all_locked_rows = page.query_selector_all(".Row-locked-in")
         for locked_rows in all_locked_rows:
             for i , div in enumerate(locked_rows.query_selector_all("div")):
                 position_status = div.get_attribute("class").split()[1].replace("letter-","")
                 if position_status == "absent":
-                    rules['no'].add(div.inner_text())
+                    rules['no'].append([div.inner_text(),i])
                 else:
                     if not (position_status == "correct" and {"letter":div.inner_text(),"pos":i} in rules["correct"]):
-                        rules[position_status].append({"letter":div.inner_text(),"pos":i})
+                        if {"letter":div.inner_text(),"pos":i} not in rules[position_status]:
+                            rules[position_status].append({"letter":div.inner_text(),"pos":i})
                     # print(div.inner_text(), position_status , i)
         correct_letters = [ le['letter'] for le in rules["correct"]]
-        rules["elsewhere"] = [ rule for rule in rules["elsewhere"] if rule["letter"]  not in correct_letters]
+        # rules["elsewhere"] = [ rule for rule in rules["elsewhere"] if rule["letter"]  not in correct_letters]
         elsewhere_letters = [ le['letter'] for le in rules["elsewhere"]]
-        rules["norepeat"]  = set([rule  for rule in rules["no"] if rule in correct_letters])
-        rules['no'] = set([rule for rule in rules["no"] if rule not in correct_letters and rule not in elsewhere_letters])
+        # rules["norepeat"]  = set([rule  for rule in rules["no"] if rule in correct_letters])
+        # rules['norepeat'] = [ {"letter":rule,"times":correct_letters.count(rule) } for rule in rules['norepeat'] ]
+        # rules['no'] = set([rule for rule in rules["no"] if rule not in correct_letters and rule not in elsewhere_letters])
+        tmp = set()
+        for rule in rules['no']:
+            if rule[0] in correct_letters or rule[0] in elsewhere_letters:
+               rules['elsewhere'].append({"letter":rule[0],"pos":rule[1]})
+            else:
+                tmp.add(rule[0])
+        rules['no'] = tmp
         result = {"success": (True if len(rules['correct']) >= 5 else False) , "rules": rules}
-        # print(result)
+        if debug:
+            print(result)
         return result
 
 
@@ -130,12 +134,11 @@ def run(playwright : Playwright):
     print("开始载入页面")
     page.goto("https://wordly.org/",wait_until="commit")
     print("等待页面载入完成...")
-    page.get_by_text("Guess the first word").wait_for(timeout=30000)
+    page.get_by_text("Guess the first word").wait_for(timeout=60000)
 
     while True:
-        print( "赢一把" if new_game(page) == 1 else "输一把")
+        code = new_game(page)
         sleep(1.5)
-        # input()
 
     content.close()
     browser.close()
